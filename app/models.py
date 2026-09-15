@@ -48,6 +48,13 @@ class Role(str, enum.Enum):
     clinician = "clinician"
 
 
+class Status(str, enum.Enum):
+    """Account approval state (admin-gated for clinicians)."""
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
 class Sex(str, enum.Enum):
     male = "male"
     female = "female"
@@ -61,6 +68,9 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255))
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.clinician)
+    # Two independent gates before a clinician is fully active:
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[Status] = mapped_column(Enum(Status), default=Status.pending)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     patients: Mapped[list["Patient"]] = relationship(back_populates="clinician")

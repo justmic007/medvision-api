@@ -35,3 +35,4 @@ gradio~=5.49
 sqlalchemy~=2.0
 alembic~=1.13
 psycopg[binary]~=3.2
+bcrypt<4.1

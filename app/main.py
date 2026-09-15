@@ -26,10 +26,11 @@ app = FastAPI(
 
 # CORS: the frontend is a separate app on a different origin (separate repo),
 # so it must be allowed to call this API from the browser. Permissive in dev;
-# tighten allow_origins to the deployed frontend URL in production.
+# Origins come from CORS_ALLOWED_ORIGINS (.env); set to the real frontend
+# URL(s) in production. Never "*" with credentials — browsers reject it.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
