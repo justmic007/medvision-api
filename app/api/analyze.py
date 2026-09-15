@@ -73,7 +73,7 @@ async def analyze(file: UploadFile = File(...)) -> AnalysisResponse:
         tmp_path = tmp.name
 
     try:
-        result = get_orchestrator().analyze(tmp_path)
+        result = get_orchestrator().analyze(tmp_path, image_id=file.filename)
         return _to_response(result)
     finally:
         Path(tmp_path).unlink(missing_ok=True)

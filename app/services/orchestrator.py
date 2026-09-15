@@ -19,6 +19,7 @@ from app.services.classifier import ChestXrayClassifier, Classifier
 from app.services.gradcam import GradCAM, render_overlay_base64
 from app.services.literature import Article, CachedPubMedRetriever, LiteratureRetriever
 from app.services.preprocessing import ChestXrayPreprocessor, Preprocessor
+from app.services.tracking import log_inference
 
 
 @dataclass
@@ -64,12 +65,21 @@ class Orchestrator:
         heatmap_top_n: int = 3,
         literature_top_n: int = 3,
         articles_per_finding: int = 2,
+        image_id: str | None = None,
     ) -> AnalysisResult:
         # 1. preprocess -> tensor
         tensor = self.preprocessor.process(image_path)
 
         # 2. classify -> structured findings
         classification = self.classifier.predict(tensor)
+
+        # Log this inference run to MLflow for provenance (Phase 2 tracking).
+        # Wrapped so a tracking failure never breaks the analysis (as with
+        # literature); tracking is observability, not core function.
+        try:
+            log_inference(classification, image_id=image_id or "orchestrator")
+        except Exception:
+            pass
         present = classification.present  # prob-desc already
 
         # 3. + 4. per present finding: heatmap and literature for the top-N
