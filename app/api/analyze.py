@@ -9,10 +9,14 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+
+from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user
-from app.models import User
+from app.db import get_db
+from app.services.case_service import create_case
+from app.models import Patient, User
 from app.schemas.analysis import AnalysisResponse, ArticleOut, FindingOut
 from app.services.orchestrator import AnalysisResult, Orchestrator
 
@@ -63,7 +67,9 @@ ALLOWED = {".dcm", ".png", ".jpg", ".jpeg"}
 @router.post("/analyze", response_model=AnalysisResponse)
 async def analyze(
     file: UploadFile = File(...),
+    patient_id: str | None = Form(None),
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> AnalysisResponse:
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED:
@@ -79,6 +85,24 @@ async def analyze(
 
     try:
         result = get_orchestrator().analyze(tmp_path, image_id=file.filename)
+
+        # If a patient is specified and owned by this clinician, persist a case.
+        if patient_id is not None:
+            patient = (
+                db.query(Patient)
+                .filter_by(id=patient_id, clinician_id=current_user.id)
+                .first()
+            )
+            if patient is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Patient not found or not owned by you.",
+                )
+            create_case(
+                db, result, patient_id=patient.id, clinician_id=current_user.id
+            )
+            db.commit()
+
         return _to_response(result)
     finally:
         Path(tmp_path).unlink(missing_ok=True)
