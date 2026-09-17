@@ -8,7 +8,7 @@ app/api/, backed by logic in app/services/.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import analyze, auth, health
+from app.api import admin, analyze, auth, health
 from app.core.config import get_settings
 from app.demo import build_demo
 import gradio as gr
@@ -39,6 +39,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(analyze.router)
 app.include_router(auth.router)
+app.include_router(admin.router)
 
 
 @app.get("/", tags=["root"])

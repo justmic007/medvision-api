@@ -9,8 +9,10 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
+from app.core.deps import get_current_user
+from app.models import User
 from app.schemas.analysis import AnalysisResponse, ArticleOut, FindingOut
 from app.services.orchestrator import AnalysisResult, Orchestrator
 
@@ -59,7 +61,10 @@ ALLOWED = {".dcm", ".png", ".jpg", ".jpeg"}
 
 
 @router.post("/analyze", response_model=AnalysisResponse)
-async def analyze(file: UploadFile = File(...)) -> AnalysisResponse:
+async def analyze(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+) -> AnalysisResponse:
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED:
         raise HTTPException(

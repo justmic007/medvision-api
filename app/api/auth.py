@@ -12,7 +12,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.security import verify_password
+from app.core.config import get_settings
 from app.core.tokens import (
+    create_verification_token,
     create_access_token,
     decode_token,
     issue_refresh_token,
@@ -31,6 +33,7 @@ from app.schemas.auth import (
     UserResponse,
 )
 from app.services.user_service import create_user
+from app.services.email import get_email_sender
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -43,6 +46,16 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> UserRespon
         # Duplicate email -> 409, but keep message generic-ish.
         raise HTTPException(status_code=409, detail="Could not register with that email.")
     db.commit()
+
+    # Send a verification email (console backend in dev prints the link).
+    settings = get_settings()
+    token = create_verification_token(user.id, user.email)
+    link = f"{settings.email_verification_base_url}/auth/verify?token={token}"
+    get_email_sender().send(
+        to=user.email,
+        subject="Verify your MedVision AI account",
+        html=f'Please verify your email: <a href="{link}">{link}</a>',
+    )
     return UserResponse(
         id=user.id, email=user.email, role=user.role.value,
         status=user.status.value, email_verified=user.email_verified,
@@ -88,3 +101,28 @@ def logout(body: RefreshRequest, db: Session = Depends(get_db)) -> MessageRespon
     revoke_refresh_token(db, body.refresh_token)
     db.commit()
     return MessageResponse(message="Logged out.")
+
+
+@router.get("/verify", response_model=MessageResponse)
+def verify_email(token: str, db: Session = Depends(get_db)) -> MessageResponse:
+    """Verify a user's email from the token in the emailed link."""
+    import jwt as pyjwt
+
+    try:
+        claims = decode_token(token)
+    except pyjwt.PyJWTError:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification link.")
+
+    if claims.get("type") != "verify":
+        raise HTTPException(status_code=400, detail="Invalid verification token.")
+
+    user = db.query(User).filter_by(id=claims["sub"]).first()
+    if user is None:
+        raise HTTPException(status_code=400, detail="Invalid verification token.")
+
+    if user.email_verified:
+        return MessageResponse(message="Email already verified.")
+
+    user.email_verified = True
+    db.commit()
+    return MessageResponse(message="Email verified. Awaiting admin approval.")

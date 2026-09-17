@@ -105,3 +105,16 @@ def revoke_refresh_token(db: Session, raw: str) -> bool:
     row.revoked = True
     db.flush()
     return True
+
+
+def create_verification_token(user_id: str, email: str) -> str:
+    """Short-lived token emailed to a user to verify they own the address."""
+    expire = _now() + timedelta(hours=24)
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "type": "verify",
+        "iat": _now(),
+        "exp": expire,
+    }
+    return jwt.encode(payload, _settings.jwt_secret_key, algorithm=_settings.jwt_algorithm)
