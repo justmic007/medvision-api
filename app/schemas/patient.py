@@ -3,7 +3,9 @@ from pydantic import BaseModel
 
 
 class PatientCreate(BaseModel):
-    mrn: str          # pseudonymous label / medical record number
+    mrn: str          # system identifier / medical record number
+    first_name: str
+    last_name: str
     sex: str          # "male" | "female" | "other"
     age: int
 
@@ -11,6 +13,8 @@ class PatientCreate(BaseModel):
 class PatientResponse(BaseModel):
     id: str
     mrn: str
+    first_name: str
+    last_name: str
     sex: str
     age: int
     clinician_id: str

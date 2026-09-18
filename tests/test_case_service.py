@@ -66,7 +66,7 @@ def test_create_case_persists_and_links(db):
     clinician = User(email="t@x.local", hashed_password="h", role=Role.clinician)
     db.add(clinician)
     db.flush()
-    patient = Patient(mrn="T-1", sex=Sex.male, age=40, clinician_id=clinician.id)
+    patient = Patient(mrn="T-1", first_name="Test", last_name="Patient", sex=Sex.male, age=40, clinician_id=clinician.id)
     db.add(patient)
     db.flush()
 

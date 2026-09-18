@@ -18,7 +18,8 @@ router = APIRouter(prefix="/patients", tags=["patients"])
 
 def _to_response(p: Patient) -> PatientResponse:
     return PatientResponse(
-        id=p.id, mrn=p.mrn, sex=p.sex.value, age=p.age, clinician_id=p.clinician_id
+        id=p.id, mrn=p.mrn, first_name=p.first_name, last_name=p.last_name,
+        sex=p.sex.value, age=p.age, clinician_id=p.clinician_id
     )
 
 
@@ -30,6 +31,8 @@ def create_patient(
 ) -> PatientResponse:
     patient = Patient(
         mrn=body.mrn,
+        first_name=body.first_name,
+        last_name=body.last_name,
         sex=Sex(body.sex),
         age=body.age,
         clinician_id=user.id,

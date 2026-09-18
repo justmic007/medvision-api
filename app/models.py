@@ -97,7 +97,9 @@ class Patient(Base):
     __tablename__ = "patients"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    mrn: Mapped[str] = mapped_column(String(64), index=True)  # pseudonymous label
+    mrn: Mapped[str] = mapped_column(String(64), index=True)  # system identifier
+    first_name: Mapped[str] = mapped_column(String(100))
+    last_name: Mapped[str] = mapped_column(String(100), index=True)
     sex: Mapped[Sex] = mapped_column(Enum(Sex))
     age: Mapped[int] = mapped_column(Integer)
     clinician_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)

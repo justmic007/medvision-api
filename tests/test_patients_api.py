@@ -50,7 +50,7 @@ def test_create_and_list_patient_scoped_to_clinician(ctx):
     db.flush()
 
     _as(doc)
-    r = c.post("/patients", json={"mrn": "P-1", "sex": "female", "age": 40})
+    r = c.post("/patients", json={"mrn": "P-1", "first_name": "Ann", "last_name": "Smith", "sex": "female", "age": 40})
     assert r.status_code == 201
     pid = r.json()["id"]
 
@@ -78,7 +78,7 @@ def test_analyze_persists_case_for_patient(ctx, monkeypatch):
     c, db = ctx
     doc = create_user(db, "doc3@medvision.dev", "pw", role=Role.clinician)
     db.flush()
-    patient = Patient(mrn="P-9", sex=__import__("app.models", fromlist=["Sex"]).Sex.male,
+    patient = Patient(mrn="P-9", first_name="Joe", last_name="Bloggs", sex=__import__("app.models", fromlist=["Sex"]).Sex.male,
                       age=50, clinician_id=doc.id)
     db.add(patient); db.flush()
 
