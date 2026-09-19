@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     email_verification_base_url: str = "http://localhost:8000"
 
 
+    # --- Object storage (MinIO local / R2 prod) ---
+    storage_backend: str = "minio"
+    s3_endpoint_url: str = "http://localhost:9000"
+    s3_bucket: str = "medvision-scans"
+    s3_access_key: str = "minioadmin"
+    s3_secret_key: str = "minioadmin"
+
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings()

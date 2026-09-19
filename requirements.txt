@@ -37,3 +37,4 @@ alembic~=1.13
 psycopg[binary]~=3.2
 bcrypt<4.1
 email-validator
+boto3~=1.35

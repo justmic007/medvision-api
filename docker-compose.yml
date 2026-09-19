@@ -12,8 +12,27 @@ services:
     volumes:
       - medvision_pgdata:/var/lib/postgresql/data
     healthcheck:
-      # pg_isready reports true readiness, not just container start.
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-medvision} -d ${POSTGRES_DB:-medvision}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  minio:
+    image: quay.io/minio/minio:latest
+    restart: unless-stopped
+    container_name: medvision-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console
+    volumes:
+      - medvision_minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -26,10 +45,13 @@ services:
       - "8000:8000"
     environment:
       - APP_NAME=MedVision AI
-      # In-container the app reaches Postgres by the service name 'db', not localhost.
       - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-medvision}:${POSTGRES_PASSWORD:-medvision_dev}@db:5432/${POSTGRES_DB:-medvision}
+      # In-container the app reaches MinIO by service name, not localhost.
+      - S3_ENDPOINT_URL=http://minio:9000
     depends_on:
       db:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/health').status==200 else sys.exit(1)"]
@@ -40,3 +62,4 @@ services:
 
 volumes:
   medvision_pgdata:
+  medvision_minio:

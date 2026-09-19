@@ -7,12 +7,14 @@ results JSON. A patient's case history is available via /patients/{id}/cases.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user
 from app.db import get_db
 from app.models import Case, Patient, User
 from app.schemas.case import CaseDetail, CaseSummary
+from app.services.storage import download_scan
 
 router = APIRouter(tags=["cases"])
 
@@ -75,3 +77,25 @@ def patient_case_history(
         .all()
     )
     return [_summary(c) for c in cases]
+
+
+@router.get("/cases/{case_id}/scan")
+def get_case_scan(
+    case_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    """Download the original scan for a case (ownership-checked)."""
+    case = db.query(Case).filter_by(id=case_id, clinician_id=user.id).first()
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found.")
+    if case.scan_key is None:
+        raise HTTPException(status_code=404, detail="No scan stored for this case.")
+    data = download_scan(case.scan_key)
+    # Content type from the key's suffix (jpg/png/dcm).
+    suffix = case.scan_key.rsplit(".", 1)[-1].lower()
+    media = {
+        "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "png": "image/png", "dcm": "application/dicom",
+    }.get(suffix, "application/octet-stream")
+    return Response(content=data, media_type=media)
