@@ -8,7 +8,7 @@ app/api/, backed by logic in app/services/.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import analyze, health
+from app.api import admin, analyze, auth, cases, health, patients
 from app.core.config import get_settings
 from app.demo import build_demo
 import gradio as gr
@@ -26,10 +26,11 @@ app = FastAPI(
 
 # CORS: the frontend is a separate app on a different origin (separate repo),
 # so it must be allowed to call this API from the browser. Permissive in dev;
-# tighten allow_origins to the deployed frontend URL in production.
+# Origins come from CORS_ALLOWED_ORIGINS (.env); set to the real frontend
+# URL(s) in production. Never "*" with credentials — browsers reject it.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,6 +38,10 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(analyze.router)
+app.include_router(auth.router)
+app.include_router(admin.router)
+app.include_router(patients.router)
+app.include_router(cases.router)
 
 
 @app.get("/", tags=["root"])

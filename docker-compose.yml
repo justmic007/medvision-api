@@ -1,16 +1,65 @@
 services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    container_name: medvision-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-medvision}
+      POSTGRES_USER: ${POSTGRES_USER:-medvision}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-medvision_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - medvision_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-medvision} -d ${POSTGRES_DB:-medvision}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  minio:
+    image: quay.io/minio/minio:latest
+    restart: unless-stopped
+    container_name: medvision-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console
+    volumes:
+      - medvision_minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   api:
     build: .
     container_name: medvision-api
     ports:
       - "8000:8000"
     environment:
-      # Overrides Settings defaults if present; safe to leave as-is in Phase 0.
       - APP_NAME=MedVision AI
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-medvision}:${POSTGRES_PASSWORD:-medvision_dev}@db:5432/${POSTGRES_DB:-medvision}
+      # In-container the app reaches MinIO by service name, not localhost.
+      - S3_ENDPOINT_URL=http://minio:9000
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     healthcheck:
-      # Uses the real /health endpoint as the container liveness probe.
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/health').status==200 else sys.exit(1)"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  medvision_pgdata:
+  medvision_minio:

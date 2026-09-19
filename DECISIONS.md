@@ -3,6 +3,11 @@
 Append-only record of architectural and scoping decisions. Each entry states
 the decision, the reasoning, and (where relevant) what was rejected.
 
+Numbering is append-only: each decision keeps its original ID for the life of the
+log — IDs are never reused or renumbered, so cross-references between entries and
+in commit messages stay valid. Gaps (e.g. D-16–D-20) are IDs that were never
+assigned, and are left as-is by design.
+
 ---
 
 **D-01 — Docker-first backend.**
@@ -174,3 +179,71 @@ versions, so the downgrade is accepted. The demo is scoped to PNG/JPG (Gradio's
 image widget can't preview DICOM); the /analyze API still accepts DICOM (D-06).
 The demo is a convenience surface for this backend repo — the production UI is
 the separate Next.js frontend — so the dependency trade-off is low-stakes.
+
+**D-21 — Per-clinician ownership is the access model (multi-tenancy).**
+Patients and cases are owned by the clinician who created them: a clinician only
+ever sees and acts on their own patients and cases (enforced by clinician_id
+filters on every query). An admin transcends this for oversight (user approval,
+and — where added — cross-clinician views). This data-isolation model is what
+makes "multi-user" mean something: it is real tenant separation, not just shared
+logins. Access checks live in the query/service layer, keyed off the authenticated
+user from the auth dependency.
+
+**D-22 — A case stores analysis results as lean JSON (no base64 heatmaps).**
+The case.results JSON holds the structured findings (name, probability, threshold)
+and the retrieved literature — but NOT the large base64 GradCAM heatmaps. Heatmaps
+are derived and heavy (~250KB each); keeping them out keeps case rows small. The
+raw scan lives in object storage by key (D-17); heatmaps can be regenerated from it
+or stored similarly later. The DB holds structured, queryable data; large binaries
+live in object storage.
+
+**D-23 — Services flush; callers own the transaction boundary.**
+Persistence services (e.g. create_case, create_user) call db.flush() to assign
+ids, not db.commit() — the caller (an endpoint, or a test) decides when to commit.
+This keeps services composable (an endpoint can do several operations in one
+transaction) and makes tests clean (each runs in a transaction rolled back
+afterward for isolation). Endpoints commit explicitly; tests never persist.
+
+**D-24 — JWT auth: access + refresh tokens, refresh tokens revocable.**
+Authentication uses JWTs. A short-lived access token (user id + role) authorizes
+requests; a longer-lived refresh token mints new access tokens. Refresh tokens are
+stored hashed (sha256 — high-entropy) in the refresh_tokens table so a DB leak
+exposes no usable tokens, and each is revocable on logout. A "type" claim separates
+access from refresh tokens. Library: pyjwt. No rotation yet (deliberate later
+enhancement). Chosen for a decoupled Next.js SPA + API across origins.
+
+**D-25 — Two-gate clinician activation: email verification AND admin approval.**
+Clinicians self-register (open registration) but stay inactive until BOTH: they
+verify their email (token emailed via the pluggable sender) AND an admin approves
+them (status pending -> approved/rejected, audit-logged). Login refused until
+email_verified AND status=approved. Admins are seeded already-active (bootstrap:
+no admin exists to approve the first admin). Bad credentials give a generic error
+(no email enumeration); gate failures are specific (a real user needs to know why).
+
+**D-26 — Object storage for scans: S3-compatible, MinIO local / R2 prod.**
+Original scans go to S3-compatible object storage (MinIO dev, Cloudflare R2 prod)
+via one boto3 client — only endpoint/credentials differ by config. A case stores
+only the storage key; pixels never enter Postgres (extends D-10). Scans stored only
+when an analysis is persisted as a case (no orphaned files). Scan-download endpoint
+returns the original, ownership-checked. MinIO image pulled from quay.io/minio/minio
+(Docker Hub denied minio/minio here; Quay is MinIO's primary registry).
+
+**D-27 — Patients have names (realistic), access-scoped and synthetic.**
+Reversed an earlier MRN-only stance. Patients have first_name/last_name plus MRN:
+a clinician managing many patients identifies them by name, as real systems do.
+Not a privacy regression — names are visible only to the owning clinician (D-21),
+the portfolio uses synthetic names, and the responsible-data story is about
+controlling exposure (access control, minimizing what's stored/leaked), not hiding
+a patient from their own doctor. Case listings show name + MRN, human-readable.
+
+**D-28 — bcrypt pinned <4.1 for passlib compatibility.**
+passlib 1.7.4 can't read bcrypt 4.1+'s version and breaks on hashing. bcrypt pinned
+<4.1 (the 4.0.x line works). Chosen over dropping passlib because its CryptContext
+gives clean scheme-upgrade support; pinning bcrypt is the lighter fix.
+
+**D-29 — Sync SQLAlchemy (not async), unlike HealthTrack.**
+MedVision uses sync SQLAlchemy + psycopg (postgresql+psycopg://), not the async
+stack HealthTrack uses. The bottleneck is CPU model inference, not DB I/O
+concurrency, so async adds complexity without benefit. HealthTrack patterns (JWT,
+CORS allowlist, email/Brevo, R2 storage, env structure) are reused where they fit;
+the sync database is the deliberate divergence.

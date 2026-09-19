@@ -33,7 +33,10 @@ def analyze_image(image_path: str):
     if not image_path:
         return [], "Upload a chest X-ray to analyze."
 
-    result = get_orchestrator().analyze(image_path)
+    import os
+    result = get_orchestrator().analyze(
+        image_path, image_id=os.path.basename(image_path)
+    )
 
     gallery = []      # (heatmap image, caption) for findings that have one
     lines = [f"### Findings ({result.num_present} present)\n"]

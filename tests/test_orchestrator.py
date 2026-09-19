@@ -14,6 +14,17 @@ from app.services.literature import Article
 from app.services.orchestrator import AnalysisResult, Orchestrator
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_mlflow(monkeypatch):
+    """Stub MLflow logging so orchestrator tests never write to ./mlruns."""
+    monkeypatch.setattr(
+        "app.services.orchestrator.log_inference", lambda *a, **k: "test-run"
+    )
+
+
 def _fake_finding(name, prob, thr=0.1):
     return Finding(name=name, probability=prob, threshold=thr, present=True)
 

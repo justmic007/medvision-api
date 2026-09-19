@@ -14,6 +14,8 @@ from app.services.orchestrator import AnalysisResult
 from app.services.orchestrator import FindingAnalysis
 from app.services.literature import Article
 import app.api.analyze as analyze_module
+from app.core.deps import get_current_user
+from app.models import Role, User
 
 client = TestClient(app)
 
@@ -37,6 +39,15 @@ def mock_orchestrator(monkeypatch):
     fake = MagicMock()
     fake.analyze.return_value = fake_result
     monkeypatch.setattr(analyze_module, "get_orchestrator", lambda: fake)
+
+    # Override auth so the protected endpoint has an authenticated user
+    # without needing a real token.
+    fake_user = User(
+        id="u1", email="doc@medvision.dev", hashed_password="x", role=Role.clinician
+    )
+    app.dependency_overrides[get_current_user] = lambda: fake_user
+    yield
+    app.dependency_overrides.clear()
 
 
 def test_analyze_accepts_image_and_returns_analysis():
