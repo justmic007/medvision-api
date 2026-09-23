@@ -67,6 +67,11 @@ Demo UI (Phase 5)
 
 ## Architecture (structural view)
 
+![MedVision architecture](docs/architecture.svg)
+
+The auth and clinical-workflow layer wraps the deterministic analysis
+core, backed by Postgres and object storage.
+
 A chest X-ray enters the API. Inside the containerized, deterministic core
 (FastAPI, local CPU): preprocessing normalizes it to a tensor; the
 TorchXRayVision classifier produces per-pathology probabilities; explainability,
@@ -76,6 +81,8 @@ optional VLM layer sits outside this box — it consumes the JSON but never
 feeds back into it.
 
 ## Request flow (one upload)
+
+![MedVision request flow](docs/request-flow.svg)
 
 1. POST /analyze — upload one image.
 2. Validate + decode (format, size).
