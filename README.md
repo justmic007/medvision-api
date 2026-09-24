@@ -36,6 +36,12 @@ Phase 6 (the clinical workflow) is built: Postgres persistence, JWT auth
 admin approval), per-clinician patients and cases, and S3-compatible object
 storage for scans (MinIO local / Cloudflare R2 prod).
 
+Phase 8 (evaluation) measures the model's real performance: per-pathology
+ROC/AUC on the NIH ChestX-ray14 public sample (mean AUC 0.762 across 13
+findings, consistent with the model's published performance). See MODEL_CARD.md
+for the full results, honest limitations, and intended/out-of-scope use, and
+docs/ for the current architecture diagrams.
+
 ## Sample data
 
 Test chest X-rays are public images, not committed to the repo (D-03). Fetch
@@ -117,12 +123,14 @@ DB-backed tests need the Postgres container running.
     |  |- db.py         SQLAlchemy engine + session
     |  |- models.py     ORM models
     |- alembic/         database migrations
-    |- scripts/         seed + data-fetch scripts
+    |- scripts/         seed, data-fetch, and evaluation scripts
     |- tests/           pytest suite
     |- data/            gitignored - public/synthetic only (D-03)
     |- mlruns/          gitignored - local MLflow store
     |- Dockerfile
     |- docker-compose.yml
     |- requirements.txt
+    |- docs/            architecture diagrams (SVG)
     |- ARCHITECTURE.md
     |- DECISIONS.md
+    |- MODEL_CARD.md    model details, measured AUC, limitations
