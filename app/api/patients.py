@@ -29,8 +29,19 @@ def create_patient(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> PatientResponse:
+    # Auto-generate a per-clinician MRN (MRN-0001, MRN-0002, ...). Using the
+    # max existing sequence + 1 so it survives deletions. Production would use a
+    # DB sequence to avoid the rare concurrent-create race.
+    existing = db.query(Patient).filter_by(clinician_id=user.id).all()
+    nums = [
+        int(p.mrn.split("-")[1])
+        for p in existing
+        if p.mrn.startswith("MRN-") and p.mrn.split("-")[1].isdigit()
+    ]
+    mrn = f"MRN-{(max(nums) + 1) if nums else 1:04d}"
+
     patient = Patient(
-        mrn=body.mrn,
+        mrn=mrn,
         first_name=body.first_name,
         last_name=body.last_name,
         sex=Sex(body.sex),

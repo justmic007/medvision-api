@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 
 class PatientCreate(BaseModel):
-    mrn: str          # system identifier / medical record number
+    # mrn is system-generated (MRN-0001 per clinician), not supplied by the client.
     first_name: str
     last_name: str
     sex: str          # "male" | "female" | "other"
