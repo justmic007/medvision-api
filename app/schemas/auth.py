@@ -1,15 +1,35 @@
 """Request/response schemas for the auth endpoints."""
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+
+# Password policy: 8-72 chars (72 is bcrypt's hard limit — longer is silently
+# truncated, so we reject it rather than mislead). Require a mix so trivial
+# passwords ("password", "12345678") are discouraged.
+PASSWORD_MIN = 8
+PASSWORD_MAX = 72
 
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=PASSWORD_MIN, max_length=PASSWORD_MAX)
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        has_letter = any(c.isalpha() for c in v)
+        has_digit = any(c.isdigit() for c in v)
+        if not (has_letter and has_digit):
+            raise ValueError(
+                "Password must contain at least one letter and one number."
+            )
+        return v
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    # Login does NOT enforce strength — it just checks against the stored hash.
+    # (Enforcing here would leak the policy and reject legacy passwords.)
+    password: str = Field(min_length=1, max_length=PASSWORD_MAX)
 
 
 class TokenPair(BaseModel):
