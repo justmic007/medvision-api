@@ -12,6 +12,16 @@ from app.models import Case, Patient, Role, User
 from app.services.user_service import create_user
 
 
+def _tiny_png():
+    """A minimal valid PNG so uploads pass the image-integrity check."""
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("L", (8, 8)).save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
 def _db_available() -> bool:
     try:
         with engine.connect() as conn:
@@ -94,7 +104,7 @@ def test_analyze_persists_case_for_patient(ctx, monkeypatch):
     _as(doc)
     r = c.post(
         "/analyze",
-        files={"file": ("x.jpg", io.BytesIO(b"data"), "image/jpeg")},
+        files={"file": ("x.png", _tiny_png(), "image/png")},
         data={"patient_id": patient.id},
     )
     assert r.status_code == 200

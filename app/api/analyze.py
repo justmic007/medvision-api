@@ -63,6 +63,7 @@ def _to_response(result: AnalysisResult) -> AnalysisResponse:
 
 
 ALLOWED = {".dcm", ".png", ".jpg", ".jpeg"}
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 @router.post("/analyze", response_model=AnalysisResponse)
@@ -81,6 +82,27 @@ async def analyze(
 
     # Read the upload once; reused for the preprocessor tempfile and scan storage.
     contents = await file.read()
+
+    # Size guard: reject oversized uploads before doing any work.
+    if len(contents) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
+        )
+
+    # Content guard: a valid extension does not guarantee a valid image
+    # (e.g. a renamed PDF). Verify it loads as an image -> clean 400, not a 500.
+    # DICOM is not a standard image; skip the PIL check for .dcm.
+    if suffix != ".dcm":
+        import io
+        from PIL import Image, UnidentifiedImageError
+        try:
+            Image.open(io.BytesIO(contents)).verify()
+        except (UnidentifiedImageError, OSError):
+            raise HTTPException(
+                status_code=400, detail="File is not a valid image."
+            )
+
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(contents)
         tmp_path = tmp.name
