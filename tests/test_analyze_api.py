@@ -50,11 +50,20 @@ def mock_orchestrator(monkeypatch):
     app.dependency_overrides.clear()
 
 
+def _tiny_png() -> io.BytesIO:
+    """A minimal valid PNG so the upload passes the image-integrity check."""
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("L", (8, 8)).save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
 def test_analyze_accepts_image_and_returns_analysis():
-    img_bytes = io.BytesIO(b"fake image content")
+    img_bytes = _tiny_png()
     resp = client.post(
         "/analyze",
-        files={"file": ("test.jpg", img_bytes, "image/jpeg")},
+        files={"file": ("test.png", img_bytes, "image/png")},
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -63,6 +72,17 @@ def test_analyze_accepts_image_and_returns_analysis():
     assert body["findings"][0]["name"] == "Nodule"
     assert body["findings"][0]["heatmap_base64"] == "FAKEB64"
     assert "diagnostic" in body["disclaimer"].lower()
+
+
+def test_analyze_rejects_non_image_file():
+    # Valid extension but non-image content -> 400 (not a 500 from the pipeline).
+    import io
+    resp = client.post(
+        "/analyze",
+        files={"file": ("fake.jpg", io.BytesIO(b"not an image at all"), "image/jpeg")},
+    )
+    assert resp.status_code == 400
+    assert "not a valid image" in resp.json()["detail"].lower()
 
 
 def test_analyze_rejects_unsupported_file_type():
