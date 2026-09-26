@@ -47,6 +47,16 @@ def _register(c, email="a@example.com", pw="secret123"):
     return c.post("/auth/register", json={"email": email, "password": pw})
 
 
+def test_register_rejects_weak_passwords(client):
+    c, _ = client
+    for weak in ["short1", "abcdefgh", "12345678", ""]:
+        r = c.post(
+            "/auth/register",
+            json={"email": "weak@example.com", "password": weak},
+        )
+        assert r.status_code == 422, f"weak password {weak!r} should be rejected"
+
+
 def test_register_creates_pending_unverified(client):
     c, _ = client
     r = _register(c)
@@ -71,7 +81,9 @@ def test_login_blocked_until_verified_and_approved(client):
     r = c.post("/auth/login", json={"email": "b@example.com", "password": "secret123"})
     assert r.status_code == 200
     assert "access_token" in r.json()
-    assert "refresh_token" in r.json()
+    # Refresh token is set as an httpOnly cookie, not returned in the body.
+    assert "refresh_token" not in r.json()
+    assert "refresh_token" in r.cookies
 
 
 def test_wrong_password_generic_error(client):
@@ -93,12 +105,35 @@ def test_refresh_and_logout_revokes(client):
     user.email_verified = True
     user.status = Status.approved
     db.flush()
-    tokens = c.post(
+    # Login sets the refresh cookie; TestClient persists it across requests.
+    r = c.post(
         "/auth/login", json={"email": "d@example.com", "password": "secret123"}
-    ).json()
-    rt = tokens["refresh_token"]
+    )
+    assert r.status_code == 200
 
-    assert c.post("/auth/refresh", json={"refresh_token": rt}).status_code == 200
-    assert c.post("/auth/logout", json={"refresh_token": rt}).status_code == 200
-    # revoked -> refresh now fails
-    assert c.post("/auth/refresh", json={"refresh_token": rt}).status_code == 401
+    # Refresh reads the cookie (no body); works while valid.
+    assert c.post("/auth/refresh").status_code == 200
+    # Logout revokes the token and clears the cookie.
+    assert c.post("/auth/logout").status_code == 200
+    # After logout the cookie is cleared, so refresh has no token -> 401.
+    assert c.post("/auth/refresh").status_code == 401
+
+
+def test_me_returns_current_user(client):
+    c, db = client
+    _register(c, "e@example.com")
+    user = db.query(User).filter_by(email="e@example.com").first()
+    user.email_verified = True
+    user.status = Status.approved
+    db.flush()
+    access = c.post(
+        "/auth/login", json={"email": "e@example.com", "password": "secret123"}
+    ).json()["access_token"]
+
+    r = c.get("/auth/me", headers={"Authorization": f"Bearer {access}"})
+    assert r.status_code == 200
+    assert r.json()["email"] == "e@example.com"
+
+    # No token -> 401.
+    c.cookies.clear()
+    assert c.get("/auth/me").status_code == 401
