@@ -112,7 +112,7 @@ DB-backed tests need the Postgres container running.
 
 ## Project structure
 
-    medvision-ai/
+    medvision-api/
     |- app/
     |  |- main.py       FastAPI entrypoint
     |  |- api/          routers: health, analyze, auth, admin, patients, cases
