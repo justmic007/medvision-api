@@ -43,3 +43,11 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != Role.admin:
         raise HTTPException(status_code=403, detail="Admin access required.")
     return user
+
+
+def require_clinician(user: User = Depends(get_current_user)) -> User:
+    """Allow only clinicians. Clinical work is separated from admin duties:
+    an admin manages access but does not read scans or manage patients."""
+    if user.role != Role.clinician:
+        raise HTTPException(status_code=403, detail="Clinician access required.")
+    return user

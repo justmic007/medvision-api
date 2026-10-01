@@ -8,7 +8,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_user
+from app.core.deps import require_clinician
 from app.db import get_db
 from app.models import Patient, Sex, User
 from app.schemas.patient import PatientCreate, PatientResponse
@@ -27,7 +27,7 @@ def _to_response(p: Patient) -> PatientResponse:
 def create_patient(
     body: PatientCreate,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_clinician),
 ) -> PatientResponse:
     # Auto-generate a per-clinician MRN (MRN-0001, MRN-0002, ...). Using the
     # max existing sequence + 1 so it survives deletions. Production would use a
@@ -57,7 +57,7 @@ def create_patient(
 @router.get("", response_model=list[PatientResponse])
 def list_patients(
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_clinician),
 ) -> list[PatientResponse]:
     patients = db.query(Patient).filter_by(clinician_id=user.id).all()
     return [_to_response(p) for p in patients]
