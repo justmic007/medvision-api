@@ -113,3 +113,12 @@ def test_analyze_persists_case_for_patient(ctx, monkeypatch):
     assert case is not None
     assert case.clinician_id == doc.id
     assert case.model_name == "test-model"
+
+
+def test_admin_blocked_from_clinical_endpoints(ctx):
+    """Separation of duties: an admin cannot access clinical endpoints."""
+    c, db = ctx
+    admin = create_user(db, "sep-admin@medvision.dev", "pw", role=Role.admin)
+    db.flush()
+    _as(admin)
+    assert c.get("/patients").status_code == 403

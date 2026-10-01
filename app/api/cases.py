@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_user
+from app.core.deps import require_clinician
 from app.db import get_db
 from app.models import Case, Patient, User
 from app.schemas.case import CaseDetail, CaseSummary
@@ -33,7 +33,7 @@ def _summary(c: Case) -> CaseSummary:
 @router.get("/cases", response_model=list[CaseSummary])
 def list_cases(
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_clinician),
 ) -> list[CaseSummary]:
     cases = (
         db.query(Case)
@@ -48,7 +48,7 @@ def list_cases(
 def get_case(
     case_id: str,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_clinician),
 ) -> CaseDetail:
     case = db.query(Case).filter_by(id=case_id, clinician_id=user.id).first()
     if case is None:
@@ -64,7 +64,7 @@ def get_case(
 def patient_case_history(
     patient_id: str,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_clinician),
 ) -> list[CaseSummary]:
     # Ownership: the patient must belong to this clinician.
     patient = db.query(Patient).filter_by(id=patient_id, clinician_id=user.id).first()
@@ -83,7 +83,7 @@ def patient_case_history(
 def get_case_scan(
     case_id: str,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_clinician),
 ) -> Response:
     """Download the original scan for a case (ownership-checked)."""
     case = db.query(Case).filter_by(id=case_id, clinician_id=user.id).first()

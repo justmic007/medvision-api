@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_user
+from app.core.deps import require_clinician
 from app.db import get_db
 from app.services.case_service import create_case
 from app.services.storage import upload_scan
@@ -70,7 +70,7 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 async def analyze(
     file: UploadFile = File(...),
     patient_id: str | None = Form(None),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_clinician),
     db: Session = Depends(get_db),
 ) -> AnalysisResponse:
     suffix = Path(file.filename or "").suffix.lower()
