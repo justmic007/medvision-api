@@ -1,8 +1,15 @@
-"""Admin endpoints: manage clinician approval.
+"""Admin endpoints: manage the clinician access lifecycle.
 
-All protected by require_admin. Approve/reject actions are recorded in the
-AuditLog (who did what to whom, when) — the provenance the clinical workflow
-needs. Only clinicians in 'pending' can be approved/rejected.
+All protected by require_admin. Status changes are recorded in the AuditLog
+(who did what to whom, when) — the provenance the clinical workflow needs.
+
+Status lifecycle (separation of duties: admins manage access, not clinical work):
+    pending   -> approved | rejected
+    approved  -> suspended            (revoke access)
+    suspended -> approved             (reinstate)
+    rejected  -> approved             (admit a previously-denied applicant)
+Current status is the source of truth for access; full history lives in the
+audit log (a reinstated clinician is simply 'approved' again).
 """
 from __future__ import annotations
 
@@ -12,73 +19,95 @@ from sqlalchemy.orm import Session
 from app.core.deps import require_admin
 from app.db import get_db
 from app.models import AuditLog, Role, Status, User
-from app.schemas.admin import ActionResponse, PendingClinician
+from app.schemas.admin import ClinicianSummary, StatusChangeRequest, ActionResponse
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+# Allowed status transitions. Any pair not listed here is rejected (400).
+_ALLOWED_TRANSITIONS: dict[Status, set[Status]] = {
+    Status.pending: {Status.approved, Status.rejected},
+    Status.approved: {Status.suspended},
+    Status.suspended: {Status.approved},
+    Status.rejected: {Status.approved},
+}
+
+# Human-readable audit action per target status.
+_AUDIT_ACTION: dict[Status, str] = {
+    Status.approved: "approve_clinician",
+    Status.rejected: "reject_clinician",
+    Status.suspended: "suspend_clinician",
+}
 
 
 def _audit(db: Session, admin: User, action: str, target_id: str) -> None:
     db.add(
         AuditLog(
-            user_id=admin.id,
-            action=action,
-            entity="user",
-            entity_id=target_id,
+            user_id=admin.id, action=action, entity="user", entity_id=target_id
         )
     )
 
 
-@router.get("/pending-clinicians", response_model=list[PendingClinician])
+def _summary(u: User) -> ClinicianSummary:
+    return ClinicianSummary(
+        id=u.id, email=u.email, email_verified=u.email_verified, status=u.status.value
+    )
+
+
+@router.get("/clinicians", response_model=list[ClinicianSummary])
+def list_clinicians(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+) -> list[ClinicianSummary]:
+    """All clinicians, any status, newest first — the management view."""
+    users = (
+        db.query(User)
+        .filter_by(role=Role.clinician)
+        .order_by(User.created_at.desc())
+        .all()
+    )
+    return [_summary(u) for u in users]
+
+
+@router.get("/pending-clinicians", response_model=list[ClinicianSummary])
 def list_pending(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin),
-) -> list[PendingClinician]:
+) -> list[ClinicianSummary]:
+    """Clinicians awaiting a first decision (kept for convenience)."""
     users = (
         db.query(User)
         .filter_by(role=Role.clinician, status=Status.pending)
+        .order_by(User.created_at.desc())
         .all()
     )
-    return [
-        PendingClinician(
-            id=u.id, email=u.email,
-            email_verified=u.email_verified, status=u.status.value,
-        )
-        for u in users
-    ]
+    return [_summary(u) for u in users]
 
 
-def _get_pending_clinician(db: Session, user_id: str) -> User:
+@router.post("/clinicians/{user_id}/status", response_model=ActionResponse)
+def change_status(
+    user_id: str,
+    body: StatusChangeRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> ActionResponse:
+    """Change a clinician's status, enforcing the allowed transitions."""
     user = db.query(User).filter_by(id=user_id).first()
     if user is None or user.role != Role.clinician:
         raise HTTPException(status_code=404, detail="Clinician not found.")
-    if user.status != Status.pending:
+
+    target = Status(body.status)
+    allowed = _ALLOWED_TRANSITIONS.get(user.status, set())
+    if target not in allowed:
         raise HTTPException(
-            status_code=409, detail=f"Clinician is already {user.status.value}."
+            status_code=400,
+            detail=f"Cannot change status from {user.status.value} to {target.value}.",
         )
-    return user
 
-
-@router.post("/clinicians/{user_id}/approve", response_model=ActionResponse)
-def approve(
-    user_id: str,
-    db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
-) -> ActionResponse:
-    user = _get_pending_clinician(db, user_id)
-    user.status = Status.approved
-    _audit(db, admin, "approve_clinician", user.id)
+    user.status = target
+    # Reinstating (-> approved from suspended/rejected) logs a distinct action.
+    action = _AUDIT_ACTION.get(target, "reinstate_clinician")
+    _audit(db, admin, action, user.id)
     db.commit()
-    return ActionResponse(id=user.id, status=user.status.value, message="Clinician approved.")
-
-
-@router.post("/clinicians/{user_id}/reject", response_model=ActionResponse)
-def reject(
-    user_id: str,
-    db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
-) -> ActionResponse:
-    user = _get_pending_clinician(db, user_id)
-    user.status = Status.rejected
-    _audit(db, admin, "reject_clinician", user.id)
-    db.commit()
-    return ActionResponse(id=user.id, status=user.status.value, message="Clinician rejected.")
+    return ActionResponse(
+        id=user.id, status=user.status.value, message=f"Clinician {target.value}."
+    )

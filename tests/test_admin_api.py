@@ -71,24 +71,69 @@ def test_admin_endpoint_rejects_no_token(ctx):
     assert resp.status_code == 401
 
 
-def test_admin_can_list_and_approve(ctx):
+def _set_status(c, user_id, status):
+    return c.post(f"/admin/clinicians/{user_id}/status", json={"status": status})
+
+
+def test_admin_lists_all_clinicians(ctx):
     c, db = ctx
     admin = create_user(db, "a@medvision.dev", "pw", role=Role.admin)
-    pending = create_user(db, "p@medvision.dev", "pw", role=Role.clinician)
+    p1 = create_user(db, "p1@medvision.dev", "pw", role=Role.clinician)
+    p2 = create_user(db, "p2@medvision.dev", "pw", role=Role.clinician)
+    p2.status = Status.approved
     db.flush()
     _as_user(admin)
 
-    # list includes the pending clinician
-    r = c.get("/admin/pending-clinicians")
+    r = c.get("/admin/clinicians")
     assert r.status_code == 200
-    ids = [u["id"] for u in r.json()]
-    assert pending.id in ids
+    ids = {u["id"] for u in r.json()}
+    assert {p1.id, p2.id} <= ids  # all clinicians, any status
 
-    # approve it
-    r = c.post(f"/admin/clinicians/{pending.id}/approve")
-    assert r.status_code == 200
-    assert r.json()["status"] == "approved"
 
-    # re-approving a non-pending clinician is a conflict
-    r = c.post(f"/admin/clinicians/{pending.id}/approve")
-    assert r.status_code == 409
+def test_admin_approve_and_reject(ctx):
+    c, db = ctx
+    admin = create_user(db, "a@medvision.dev", "pw", role=Role.admin)
+    a = create_user(db, "a1@medvision.dev", "pw", role=Role.clinician)
+    r = create_user(db, "r1@medvision.dev", "pw", role=Role.clinician)
+    db.flush()
+    _as_user(admin)
+
+    assert _set_status(c, a.id, "approved").json()["status"] == "approved"
+    assert _set_status(c, r.id, "rejected").json()["status"] == "rejected"
+
+
+def test_admin_full_lifecycle_suspend_reinstate(ctx):
+    c, db = ctx
+    admin = create_user(db, "a@medvision.dev", "pw", role=Role.admin)
+    doc = create_user(db, "doc@medvision.dev", "pw", role=Role.clinician)
+    db.flush()
+    _as_user(admin)
+
+    # pending -> approved
+    assert _set_status(c, doc.id, "approved").json()["status"] == "approved"
+    # approved -> suspended
+    assert _set_status(c, doc.id, "suspended").json()["status"] == "suspended"
+    # suspended -> approved (reinstate)
+    assert _set_status(c, doc.id, "approved").json()["status"] == "approved"
+
+
+def test_admin_rejects_invalid_transition(ctx):
+    c, db = ctx
+    admin = create_user(db, "a@medvision.dev", "pw", role=Role.admin)
+    doc = create_user(db, "doc2@medvision.dev", "pw", role=Role.clinician)
+    db.flush()
+    _as_user(admin)
+
+    # pending -> suspended is not allowed
+    r = _set_status(c, doc.id, "suspended")
+    assert r.status_code == 400
+
+
+def test_status_change_requires_admin(ctx):
+    c, db = ctx
+    clinician = create_user(db, "cc@medvision.dev", "pw", role=Role.clinician)
+    target = create_user(db, "tt@medvision.dev", "pw", role=Role.clinician)
+    db.flush()
+    _as_user(clinician)
+    r = _set_status(c, target.id, "approved")
+    assert r.status_code == 403

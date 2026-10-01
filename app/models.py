@@ -53,6 +53,7 @@ class Status(str, enum.Enum):
     pending = "pending"
     approved = "approved"
     rejected = "rejected"
+    suspended = "suspended"
 
 
 class Sex(str, enum.Enum):
