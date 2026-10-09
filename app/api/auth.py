@@ -29,8 +29,11 @@ from app.core.cookies import (
 from app.core.deps import get_current_user
 from app.db import get_db
 from app.models import Role, Status, User
+from app.core.demo import DEMO_ACCOUNTS
+from app.services.demo_service import reset_demo_state
 from app.schemas.auth import (
     AccessTokenResponse,
+    DemoLoginRequest,
     LoginRequest,
     MessageResponse,
     RefreshRequest,
@@ -91,6 +94,33 @@ def login(
     db.commit()
     # Refresh token goes in an httpOnly cookie (JS can't read it); the access
     # token is returned in the body for the client to hold in memory.
+    set_refresh_cookie(response, refresh)
+    return AccessTokenResponse(access_token=access)
+
+
+@router.post("/demo-login", response_model=AccessTokenResponse)
+def demo_login(
+    body: DemoLoginRequest, response: Response, db: Session = Depends(get_db)
+) -> AccessTokenResponse:
+    """Public demo sign-in by role only (no credentials). Gated by
+    DEMO_LOGIN_ENABLED; issues a session ONLY for a flagged, approved demo
+    account, so it can never mint a token for a real user."""
+    if not get_settings().demo_login_enabled:
+        raise HTTPException(status_code=404, detail="Not found.")
+
+    email = DEMO_ACCOUNTS.get(body.role)
+    if email is None:
+        raise HTTPException(status_code=404, detail="Not found.")
+
+    reset_demo_state(db)
+
+    user = db.query(User).filter_by(email=email).first()
+    if user is None or not user.is_demo or user.status != Status.approved:
+        raise HTTPException(status_code=404, detail="Not found.")
+
+    access = create_access_token(user.id, user.role.value)
+    refresh = issue_refresh_token(db, user.id)
+    db.commit()
     set_refresh_cookie(response, refresh)
     return AccessTokenResponse(access_token=access)
 

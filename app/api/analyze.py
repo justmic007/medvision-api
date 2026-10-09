@@ -110,6 +110,11 @@ async def analyze(
     try:
         result = get_orchestrator().analyze(tmp_path, image_id=file.filename)
 
+        # Demo clinicians run analysis as a one-off only: never persist a scan
+        # to object storage or a case to the DB (keeps the public demo clean).
+        if current_user.is_demo:
+            patient_id = None
+
         # If a patient is specified and owned by this clinician, persist a case.
         if patient_id is not None:
             patient = (

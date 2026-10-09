@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     )
     environment: str = "development"
 
+    # Public demo: when True, POST /auth/demo-login issues sessions for the
+    # is_demo accounts (role-only, no password). Off by default; on only on Render.
+    demo_login_enabled: bool = False
+
     # --- Database ---
     database_url: str = (
         "postgresql+psycopg://medvision:medvision_dev@localhost:5432/medvision"
