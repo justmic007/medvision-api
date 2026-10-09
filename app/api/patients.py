@@ -8,7 +8,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.deps import require_clinician
+from app.core.deps import require_clinician, demo_read_only
 from app.db import get_db
 from app.models import Patient, Sex, User
 from app.schemas.patient import PatientCreate, PatientResponse
@@ -28,6 +28,7 @@ def create_patient(
     body: PatientCreate,
     db: Session = Depends(get_db),
     user: User = Depends(require_clinician),
+    _demo: User = Depends(demo_read_only),
 ) -> PatientResponse:
     # Auto-generate a per-clinician MRN (MRN-0001, MRN-0002, ...). Using the
     # max existing sequence + 1 so it survives deletions. Production would use a

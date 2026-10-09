@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_admin
+from app.core.demo import DEMO_SACRIFICIAL_CLINICIAN
 from app.db import get_db
 from app.models import AuditLog, Role, Status, User
 from app.schemas.admin import ClinicianSummary, StatusChangeRequest, ActionResponse
@@ -58,13 +59,13 @@ def list_clinicians(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin),
 ) -> list[ClinicianSummary]:
-    """All clinicians, any status, newest first — the management view."""
-    users = (
-        db.query(User)
-        .filter_by(role=Role.clinician)
-        .order_by(User.created_at.desc())
-        .all()
-    )
+    """All clinicians, any status, newest first — the management view.
+
+    A demo admin sees only demo clinicians, never real registrants' emails."""
+    q = db.query(User).filter_by(role=Role.clinician)
+    if _admin.is_demo:
+        q = q.filter_by(is_demo=True)
+    users = q.order_by(User.created_at.desc()).all()
     return [_summary(u) for u in users]
 
 
@@ -74,12 +75,10 @@ def list_pending(
     _admin: User = Depends(require_admin),
 ) -> list[ClinicianSummary]:
     """Clinicians awaiting a first decision (kept for convenience)."""
-    users = (
-        db.query(User)
-        .filter_by(role=Role.clinician, status=Status.pending)
-        .order_by(User.created_at.desc())
-        .all()
-    )
+    q = db.query(User).filter_by(role=Role.clinician, status=Status.pending)
+    if _admin.is_demo:
+        q = q.filter_by(is_demo=True)
+    users = q.order_by(User.created_at.desc()).all()
     return [_summary(u) for u in users]
 
 
@@ -94,6 +93,11 @@ def change_status(
     user = db.query(User).filter_by(id=user_id).first()
     if user is None or user.role != Role.clinician:
         raise HTTPException(status_code=404, detail="Clinician not found.")
+
+    # A demo admin may drive the lifecycle ONLY on the sacrificial demo
+    # clinician — never on a real clinician or the primary demo clinician.
+    if admin.is_demo and user.email != DEMO_SACRIFICIAL_CLINICIAN:
+        raise HTTPException(status_code=403, detail="demo_read_only")
 
     target = Status(body.status)
     allowed = _ALLOWED_TRANSITIONS.get(user.status, set())

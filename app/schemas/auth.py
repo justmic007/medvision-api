@@ -32,6 +32,19 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=PASSWORD_MAX)
 
 
+class DemoLoginRequest(BaseModel):
+    """Public demo: the browser sends ONLY the role. The backend maps it to a
+    fixed demo-domain account; no email or password ever crosses the wire."""
+    role: str
+
+    @field_validator("role")
+    @classmethod
+    def valid_role(cls, v: str) -> str:
+        if v not in {"clinician", "admin"}:
+            raise ValueError("role must be 'clinician' or 'admin'")
+        return v
+
+
 class TokenPair(BaseModel):
     access_token: str
     refresh_token: str

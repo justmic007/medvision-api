@@ -7,7 +7,7 @@ enforcement points that make the roles mean something.
 from __future__ import annotations
 
 import jwt as pyjwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -50,4 +50,18 @@ def require_clinician(user: User = Depends(get_current_user)) -> User:
     an admin manages access but does not read scans or manage patients."""
     if user.role != Role.clinician:
         raise HTTPException(status_code=403, detail="Clinician access required.")
+    return user
+
+
+def demo_read_only(
+    request: Request, user: User = Depends(get_current_user)
+) -> User:
+    """Look-but-don't-touch for demo accounts. Reads (GET/HEAD/OPTIONS) always
+    pass; any state-changing method from an is_demo user is refused with the
+    detail 'demo_read_only', which the frontend turns into a friendly notice.
+    Real accounts (is_demo=False) are never affected. The one carve-out — a
+    demo admin acting on the sacrificial clinician — is handled in the admin
+    status endpoint, not here."""
+    if user.is_demo and request.method not in ("GET", "HEAD", "OPTIONS"):
+        raise HTTPException(status_code=403, detail="demo_read_only")
     return user

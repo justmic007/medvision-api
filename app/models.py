@@ -72,6 +72,9 @@ class User(Base):
     # Two independent gates before a clinician is fully active:
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[Status] = mapped_column(Enum(Status), default=Status.pending)
+    # True only for the public demo accounts (demo domain). Gates read-only
+    # enforcement and demo-login; real accounts are always False.
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     patients: Mapped[list["Patient"]] = relationship(back_populates="clinician")
