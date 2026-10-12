@@ -74,6 +74,12 @@ class ChestXrayClassifier(Classifier):
         self._activations: torch.Tensor | None = None
         self._register_activation_hook()
 
+    @property
+    def model(self):
+        # The underlying DenseNet, shared with GradCAM to avoid loading a
+        # second copy of the weights (halves model memory).
+        return self._model
+
     def _register_activation_hook(self) -> None:
         """Capture the output of the convolutional feature block on each pass.
 

@@ -48,8 +48,14 @@ class GradCAM(Explainer):
     builds a normalized heatmap sized to the input image.
     """
 
-    def __init__(self, weights: str = "densenet121-res224-all") -> None:
-        self._model = xrv.models.DenseNet(weights=weights)
+    def __init__(
+        self,
+        weights: str = "densenet121-res224-all",
+        model=None,
+    ) -> None:
+        # Reuse an existing DenseNet when passed (the classifier's), so we
+        # don't load a second full copy of the model into memory.
+        self._model = model if model is not None else xrv.models.DenseNet(weights=weights)
         self._model.eval()
         self.pathologies: list[str] = list(self._model.pathologies)
         self._weights = weights
@@ -106,6 +112,49 @@ class GradCAM(Explainer):
             handle.remove()
 
 
+def _colorize_jet(heatmap: np.ndarray) -> np.ndarray:
+    """Map a [0, 1] heatmap to RGB uint8 via matplotlib's exact 'jet' LUT
+    (precomputed in _jet_lut.py) -- same colors as matplotlib, no import."""
+    from app.services._jet_lut import JET_LUT
+
+    idx = np.clip((np.asarray(heatmap, dtype=np.float32) * 255.0).round(), 0, 255).astype(np.int64)
+    return JET_LUT[idx]
+
+
+def _overlay_png_bytes(
+    tensor: torch.Tensor,
+    heatmap: np.ndarray,
+    alpha: float = 0.4,
+    size: int = 512,
+) -> bytes:
+    """Alpha-blend a jet-colored heatmap over the grayscale X-ray and return PNG
+    bytes. NumPy + Pillow only (no matplotlib). Both layers are bilinear-upsampled
+    to `size` so the result is as smooth as matplotlib's render. The heatmap VALUES
+    are unchanged (straight from GradCAM); only the drawing method changed."""
+    import io
+
+    from PIL import Image
+
+    img = tensor[0, 0].detach().cpu().numpy().astype(np.float32)
+    mn, mx = float(img.min()), float(img.max())
+    img = (img - mn) / (mx - mn) if mx > mn else np.zeros_like(img)
+
+    gray_im = Image.fromarray((img * 255.0).astype(np.uint8)).resize((size, size), Image.BILINEAR)
+    heat = np.clip(np.asarray(heatmap, dtype=np.float32), 0.0, 1.0)
+    heat_im = Image.fromarray((heat * 255.0).astype(np.uint8)).resize((size, size), Image.BILINEAR)
+
+    gray_up = np.asarray(gray_im, dtype=np.float32)
+    heat_up = np.asarray(heat_im, dtype=np.float32) / 255.0
+
+    base_rgb = np.stack([gray_up, gray_up, gray_up], axis=-1)
+    heat_rgb = _colorize_jet(heat_up).astype(np.float32)
+    blended = np.clip((1.0 - alpha) * base_rgb + alpha * heat_rgb, 0, 255).astype(np.uint8)
+
+    buf = io.BytesIO()
+    Image.fromarray(blended, mode="RGB").save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def render_overlay(
     tensor: torch.Tensor,
     heatmap: np.ndarray,
@@ -114,27 +163,11 @@ def render_overlay(
 ) -> str:
     """Render `heatmap` as a colored overlay on the X-ray and save a PNG.
 
-    `tensor` is the (1, 1, H, W) preprocessed image; `heatmap` is the (H, W)
-    map from GradCAM.heatmap(). Saves to out_path and returns it.
-
-    Kept as a standalone function (not on the class) so rendering is decoupled
-    from the CAM computation — a caller can use the raw heatmap array without
-    ever touching matplotlib.
-    """
-    import matplotlib
-
-    matplotlib.use("Agg")  # non-interactive backend; no display needed
-    import matplotlib.pyplot as plt
-
-    # The X-ray as a 2D grayscale array in display range.
-    img = tensor[0, 0].detach().cpu().numpy()
-
-    fig, ax = plt.subplots(figsize=(6, 6))
-    ax.imshow(img, cmap="gray")
-    ax.imshow(heatmap, cmap="jet", alpha=alpha)
-    ax.axis("off")
-    fig.savefig(out_path, bbox_inches="tight", pad_inches=0, dpi=100)
-    plt.close(fig)
+    `tensor` is the (1, 1, H, W) preprocessed image; `heatmap` is the (H, W) map
+    from GradCAM.heatmap(). Saves to out_path and returns it. NumPy + Pillow with
+    matplotlib's exact jet colormap (no matplotlib import) to keep memory low."""
+    with open(out_path, "wb") as f:
+        f.write(_overlay_png_bytes(tensor, heatmap, alpha))
     return out_path
 
 
@@ -145,28 +178,8 @@ def render_overlay_base64(
 ) -> str:
     """Render the overlay to an in-memory PNG and return base64 (no file).
 
-    Same rendering as render_overlay(), but returns a base64-encoded PNG string
-    suitable for embedding in a JSON API response or an <img src="data:..."> —
-    used by the orchestrator / /analyze endpoint (D-14 era: demo returns base64;
-    storage-backed URLs come with the clinical-workflow phase, D-10).
-    """
+    Same output as render_overlay(), base64-encoded for an <img src="data:...">
+    or JSON response. NumPy + Pillow, matplotlib's exact jet colors, no matplotlib."""
     import base64
-    import io
 
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    img = tensor[0, 0].detach().cpu().numpy()
-
-    fig, ax = plt.subplots(figsize=(6, 6))
-    ax.imshow(img, cmap="gray")
-    ax.imshow(heatmap, cmap="jet", alpha=alpha)
-    ax.axis("off")
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0, dpi=100)
-    plt.close(fig)
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode("ascii")
+    return base64.b64encode(_overlay_png_bytes(tensor, heatmap, alpha)).decode("ascii")
