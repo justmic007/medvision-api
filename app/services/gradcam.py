@@ -1,34 +1,33 @@
-"""Explainability: GradCAM heatmaps over the X-ray.
+"""Explainability: CAM heatmaps over the X-ray.
 
 Answers "where did the model look?" for a chosen finding. Given a preprocessed
 image and a target pathology, it produces a heatmap (values in [0, 1], sized to
 the input image) highlighting the regions that drove that finding.
 
-How it works:
-  1. Forward pass with gradients enabled; capture the `features` activations
-     (1, 1024, 7, 7) and retain their gradient.
-  2. Backpropagate from the target finding's score.
-  3. Weight each of the 1024 channels by its mean gradient (channel importance),
-     sum into a 7x7 map, ReLU (keep positive contributions only), normalize.
-  4. Upsample the 7x7 map to the input size -> the heatmap.
+Why CAM, not gradient GradCAM: the DenseNet head is global-average-pool -> a
+single linear classifier. For that architecture GradCAM reduces *exactly* to
+classic CAM — the gradient-weighted channel importances equal the classifier's
+own weights for the target class. So the heatmap is computed directly from the
+conv feature map and the classifier weights, with no backprop and no torch:
 
-Gradient capture uses `Tensor.retain_grad()` on the forward-captured activations
-rather than a backward hook: torchxrayvision's model applies an in-place ReLU in
-its `features2` step, which collides with backward hooks on `features`. Reading
-`.grad` off a retained tensor sidesteps that entirely (verified on torch 2.2.2).
+  1. Take the (1024, 7, 7) feature map from the forward pass.
+  2. Weight each channel by that finding's classifier weight; sum -> 7x7.
+  3. ReLU (keep positive contributions), upsample to input size, normalize.
 
-Design (D-11): explainability is defined by an interface; the chest X-ray
-implementation is one concrete case. GradCAM manages its own gradient-enabled
-forward pass, independent of the classifier's no_grad inference path.
+This is numerically the same explanation the torch GradCAM produced, now
+torch-free. (D-11) explainability remains defined by an interface; this is the
+chest X-ray implementation.
 """
 from __future__ import annotations
 
+import base64
+import io
 from abc import ABC, abstractmethod
 
 import numpy as np
-import torch
-import torch.nn.functional as F
-import torchxrayvision as xrv
+from PIL import Image
+
+from app.services._onnx_model import OnnxXrayModel
 
 TARGET_SIZE = 224
 
@@ -37,26 +36,21 @@ class Explainer(ABC):
     """Produces a heatmap for a target finding on a preprocessed image."""
 
     @abstractmethod
-    def heatmap(self, tensor: torch.Tensor, finding: str) -> np.ndarray:
+    def heatmap(self, image: np.ndarray, finding: str) -> np.ndarray:
         ...
 
 
 class GradCAM(Explainer):
-    """GradCAM for the TorchXRayVision DenseNet.
-
-    Hooks the `features` block's output, backpropagates a chosen finding, and
-    builds a normalized heatmap sized to the input image.
-    """
+    """CAM for the exported DenseNet, computed from the ONNX feature map."""
 
     def __init__(
         self,
         weights: str = "densenet121-res224-all",
-        model=None,
+        model: OnnxXrayModel | None = None,
     ) -> None:
-        # Reuse an existing DenseNet when passed (the classifier's), so we
-        # don't load a second full copy of the model into memory.
-        self._model = model if model is not None else xrv.models.DenseNet(weights=weights)
-        self._model.eval()
+        # Reuse the shared model when passed (the classifier's), so we don't
+        # load a second copy of the graph and weights.
+        self._model = model if model is not None else OnnxXrayModel(weights_name=weights)
         self.pathologies: list[str] = list(self._model.pathologies)
         self._weights = weights
 
@@ -68,48 +62,31 @@ class GradCAM(Explainer):
             )
         return self.pathologies.index(finding)
 
-    def heatmap(self, tensor: torch.Tensor, finding: str) -> np.ndarray:
-        """Return a (H, W) float heatmap in [0, 1] for `finding` on `tensor`.
+    def heatmap(self, image: np.ndarray, finding: str) -> np.ndarray:
+        """Return a (H, W) float heatmap in [0, 1] for `finding` on `image`.
 
-        `tensor` is a (1, 1, H, W) preprocessed image from a Preprocessor.
+        `image` is a (1, 1, H, W) preprocessed array from a Preprocessor.
         """
         idx = self._finding_index(finding)
+        _probs, featmap = self._model.run(image)   # (1, 1024, 7, 7)
 
-        captured: dict[str, torch.Tensor] = {}
+        act = featmap[0]                            # (1024, 7, 7)
+        w = self._model.weight[idx]                 # (1024,)
+        cam = np.tensordot(w, act, axes=([0], [0]))  # (7, 7)
+        cam = np.maximum(cam, 0.0)                   # keep positive contributions
 
-        def fwd_hook(_m, _i, output):
-            output.retain_grad()
-            captured["act"] = output
+        # Upsample 7x7 -> input size via bilinear interpolation.
+        size = image.shape[-2:]                      # (H, W)
+        cam_im = Image.fromarray(cam.astype(np.float32), mode="F")
+        cam_im = cam_im.resize((size[1], size[0]), Image.BILINEAR)
+        cam = np.array(cam_im, dtype=np.float32)  # writable copy (PIL array is read-only)
 
-        handle = self._model.features.register_forward_hook(fwd_hook)
-        try:
-            inp = tensor.clone().requires_grad_(True)
-            score = self._model(inp)[0][idx]
-            self._model.zero_grad()
-            score.backward()
-
-            act = captured["act"]          # (1, 1024, 7, 7)
-            grad = act.grad                # (1, 1024, 7, 7)
-
-            # Channel importance = mean gradient per channel -> (1, 1024, 1, 1)
-            weights = grad.mean(dim=(2, 3), keepdim=True)
-            # Weighted sum over channels -> (1, 1, 7, 7)
-            cam = (weights * act).sum(dim=1, keepdim=True)
-            cam = F.relu(cam)              # keep positive contributions
-
-            # Upsample to input size, drop batch/channel dims -> (H, W)
-            size = tensor.shape[-2:]
-            cam = F.interpolate(cam, size=size, mode="bilinear", align_corners=False)
-            cam = cam[0, 0].detach().cpu().numpy()
-
-            # Normalize to [0, 1] (guard against a flat map)
-            cam -= cam.min()
-            peak = cam.max()
-            if peak > 0:
-                cam /= peak
-            return cam
-        finally:
-            handle.remove()
+        # Normalize to [0, 1] (guard against a flat map).
+        cam -= cam.min()
+        peak = cam.max()
+        if peak > 0:
+            cam /= peak
+        return cam
 
 
 def _colorize_jet(heatmap: np.ndarray) -> np.ndarray:
@@ -122,20 +99,14 @@ def _colorize_jet(heatmap: np.ndarray) -> np.ndarray:
 
 
 def _overlay_png_bytes(
-    tensor: torch.Tensor,
+    image: np.ndarray,
     heatmap: np.ndarray,
     alpha: float = 0.4,
     size: int = 512,
 ) -> bytes:
-    """Alpha-blend a jet-colored heatmap over the grayscale X-ray and return PNG
-    bytes. NumPy + Pillow only (no matplotlib). Both layers are bilinear-upsampled
-    to `size` so the result is as smooth as matplotlib's render. The heatmap VALUES
-    are unchanged (straight from GradCAM); only the drawing method changed."""
-    import io
-
-    from PIL import Image
-
-    img = tensor[0, 0].detach().cpu().numpy().astype(np.float32)
+    """Alpha-blend a jet-colored heatmap over the grayscale X-ray; return PNG
+    bytes. NumPy + Pillow only. Both layers are bilinear-upsampled to `size`."""
+    img = np.asarray(image)[0, 0].astype(np.float32)
     mn, mx = float(img.min()), float(img.max())
     img = (img - mn) / (mx - mn) if mx > mn else np.zeros_like(img)
 
@@ -156,30 +127,24 @@ def _overlay_png_bytes(
 
 
 def render_overlay(
-    tensor: torch.Tensor,
+    image: np.ndarray,
     heatmap: np.ndarray,
     out_path: str,
     alpha: float = 0.4,
 ) -> str:
     """Render `heatmap` as a colored overlay on the X-ray and save a PNG.
 
-    `tensor` is the (1, 1, H, W) preprocessed image; `heatmap` is the (H, W) map
-    from GradCAM.heatmap(). Saves to out_path and returns it. NumPy + Pillow with
-    matplotlib's exact jet colormap (no matplotlib import) to keep memory low."""
+    `image` is the (1, 1, H, W) preprocessed array; `heatmap` is the (H, W) map
+    from GradCAM.heatmap(). Saves to out_path and returns it."""
     with open(out_path, "wb") as f:
-        f.write(_overlay_png_bytes(tensor, heatmap, alpha))
+        f.write(_overlay_png_bytes(image, heatmap, alpha))
     return out_path
 
 
 def render_overlay_base64(
-    tensor: torch.Tensor,
+    image: np.ndarray,
     heatmap: np.ndarray,
     alpha: float = 0.4,
 ) -> str:
-    """Render the overlay to an in-memory PNG and return base64 (no file).
-
-    Same output as render_overlay(), base64-encoded for an <img src="data:...">
-    or JSON response. NumPy + Pillow, matplotlib's exact jet colors, no matplotlib."""
-    import base64
-
-    return base64.b64encode(_overlay_png_bytes(tensor, heatmap, alpha)).decode("ascii")
+    """Render the overlay to an in-memory PNG and return base64 (no file)."""
+    return base64.b64encode(_overlay_png_bytes(image, heatmap, alpha)).decode("ascii")

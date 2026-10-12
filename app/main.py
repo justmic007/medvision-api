@@ -13,12 +13,6 @@ from app.core.config import get_settings
 from app.demo import build_demo
 import gradio as gr
 
-import torch
-
-# Single-threaded CPU inference: on a small shared instance extra threads
-# don't speed up this model and each adds memory arenas. Keeps RSS low.
-torch.set_num_threads(1)
-
 settings = get_settings()
 
 app = FastAPI(
