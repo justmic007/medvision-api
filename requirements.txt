@@ -16,6 +16,7 @@ httpx~=0.28.0        # required by fastapi.testclient
 # memory. See DECISIONS.md D-14.
 onnxruntime~=1.20
 scikit-image~=0.24     # preprocessing (center-crop + anti-aliased resize), torch-free
+matplotlib~=3.9        # heatmap overlay rendering (also pulled in by mlflow)
 pydicom~=3.0
 pillow~=11.0
 numpy~=1.26
