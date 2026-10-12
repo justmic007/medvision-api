@@ -56,7 +56,9 @@ class Orchestrator:
     ) -> None:
         self.preprocessor = preprocessor or ChestXrayPreprocessor()
         self.classifier = classifier or ChestXrayClassifier()
-        self.explainer = explainer or GradCAM()
+        # Share the classifier's DenseNet with GradCAM instead of loading
+        # a second copy -- same weights, half the model memory.
+        self.explainer = explainer or GradCAM(model=getattr(self.classifier, "model", None))
         self.retriever = retriever or CachedPubMedRetriever()
 
     def analyze(
