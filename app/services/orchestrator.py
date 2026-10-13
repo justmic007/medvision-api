@@ -22,6 +22,22 @@ from app.services.preprocessing import ChestXrayPreprocessor, Preprocessor
 from app.services.tracking import log_inference
 
 
+def _rss_mb() -> float:
+    """Current process RSS in MB (Linux), for temporary memory debugging."""
+    try:
+        with open("/proc/self/status") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return round(int(line.split()[1]) / 1024, 1)
+    except Exception:
+        pass
+    return -1.0
+
+
+def _mem(label: str) -> None:
+    print(f"[MEM] {label}: {_rss_mb()} MB", flush=True)
+
+
 @dataclass
 class FindingAnalysis:
     """One present finding, with its optional heatmap and literature."""
@@ -70,10 +86,13 @@ class Orchestrator:
         image_id: str | None = None,
     ) -> AnalysisResult:
         # 1. preprocess -> tensor
+        _mem("analyze start (model loaded)")
         tensor = self.preprocessor.process(image_path)
+        _mem("after preprocess")
 
         # 2. classify -> structured findings
         classification = self.classifier.predict(tensor)
+        _mem("after classify")
 
         # Log this inference run to MLflow for provenance (Phase 2 tracking).
         # Wrapped so a tracking failure never breaks the analysis (as with
@@ -93,7 +112,9 @@ class Orchestrator:
             heatmap_b64 = None
             if rank < heatmap_top_n:
                 hm = self.explainer.heatmap(tensor, f.name)
+                _mem(f"after gradcam rank={rank} {f.name}")
                 heatmap_b64 = render_overlay_base64(tensor, hm)
+                _mem(f"after overlay rank={rank}")
 
             articles = []
             if rank < literature_top_n:
