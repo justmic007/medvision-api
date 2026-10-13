@@ -1,8 +1,5 @@
-# MedVision AI — Phase 0 dependencies
+# MedVision AI — dependencies
 # Pinned with ~= (compatible release): patch/minor updates allowed, majors held.
-# The heavier imaging stack (torch, torchxrayvision, monai, mlflow) is added in
-# Phase 1/2 to keep the Phase 0 image small and fast to build.
-
 fastapi~=0.141.0
 uvicorn[standard]~=0.52.0
 pydantic-settings~=2.15.0
@@ -11,13 +8,15 @@ pydantic-settings~=2.15.0
 pytest~=8.4.0
 httpx~=0.28.0        # required by fastapi.testclient
 
-# --- Phase 1: imaging & preprocessing ---
-# Pinned to the Intel-macOS ceiling: torch tops out at 2.2.2 on x86-64 macOS
-# (no Intel wheels after 2.2.x). torchvision 0.17.2 is its version-locked partner.
-# See DECISIONS.md D-13.
-torch==2.2.2
-torchvision==0.17.2
-torchxrayvision==1.5.4
+# --- Imaging & inference ---
+# torch/torchvision/torchxrayvision removed: the model is exported to ONNX
+# (app/ml_assets/) and run with onnxruntime. `import torch` alone cost ~291 MB
+# RSS and pushed the server past Render's 512 MB free limit; onnxruntime gives
+# identical predictions (verified, max abs diff ~2e-7) at a fraction of the
+# memory. See DECISIONS.md D-14.
+onnxruntime~=1.20
+scikit-image~=0.24     # preprocessing (center-crop + anti-aliased resize), torch-free
+matplotlib~=3.9        # heatmap overlay rendering (also pulled in by mlflow)
 pydicom~=3.0
 pillow~=11.0
 numpy~=1.26
