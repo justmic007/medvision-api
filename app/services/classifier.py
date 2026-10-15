@@ -2,12 +2,15 @@
 
 Wraps the exported TorchXRayVision DenseNet (run via onnxruntime, no torch)
 behind a pluggable interface (D-11) and turns its output into a structured,
-per-finding result: probability + present/absent flag decided by the model's
-*published* operating points (D-07), never hand-tuned.
+per-finding result: a confidence score + present/absent flag.
 
-Activation exposure (Phase 3 groundwork): the ONNX graph returns the conv
-feature map alongside the probabilities, so the activations that produced a
-prediction are available for explainability (GradCAM) without a second pass.
+Decision rule (D-07, corrected): the model's output is *operating-point
+normalized* — TorchXRayVision rescales each pathology's raw probability so that
+that pathology's published operating point maps to exactly 0.5. So a finding is
+"present" when its normalized confidence is at or above 0.5, uniformly across
+all 18 pathologies. (The earlier code compared the normalized confidence against
+the *raw* operating point, two different scales, which over-flagged findings the
+model did not actually reach the operating point for.)
 """
 from __future__ import annotations
 
@@ -18,13 +21,17 @@ import numpy as np
 
 from app.services._onnx_model import OnnxXrayModel
 
+# The model output is normalized so each pathology's operating point is 0.5;
+# present == confidence >= this, the same boundary for every pathology.
+OPERATING_POINT = 0.5
+
 
 @dataclass
 class Finding:
     """One pathology result."""
     name: str
-    probability: float
-    threshold: float
+    probability: float          # operating-point-normalized confidence in [0, 1]
+    threshold: float            # the present/absent boundary (OPERATING_POINT)
     present: bool
 
 
@@ -39,7 +46,7 @@ class ClassificationResult:
 
     @property
     def present(self) -> list[Finding]:
-        """Only the findings flagged present, highest probability first."""
+        """Only the findings flagged present, highest confidence first."""
         return sorted(
             (f for f in self.findings if f.present),
             key=lambda f: -f.probability,
@@ -47,11 +54,7 @@ class ClassificationResult:
 
 
 class Classifier(ABC):
-    """Turns a model-ready array into a ClassificationResult.
-
-    The contract: given a (1, 1, H, W) array from a Preprocessor, return a
-    ClassificationResult. Implementations own their model and label set.
-    """
+    """Turns a model-ready array into a ClassificationResult."""
 
     @abstractmethod
     def predict(self, image: np.ndarray) -> ClassificationResult:
@@ -59,28 +62,20 @@ class Classifier(ABC):
 
 
 class ChestXrayClassifier(Classifier):
-    """Chest X-ray classifier backed by the exported DenseNet (onnxruntime).
-
-    Uses the model's published per-pathology operating points (`op_threshs`) to
-    flag findings present/absent (D-07). Keeps the feature map for GradCAM.
-    """
+    """Chest X-ray classifier backed by the exported DenseNet (onnxruntime)."""
 
     def __init__(
         self,
         weights: str = "densenet121-res224-all",
         model: OnnxXrayModel | None = None,
     ) -> None:
-        # Reuse a shared model instance when passed (see Orchestrator), so the
-        # classifier and GradCAM don't each load the graph + weights.
         self._model = model if model is not None else OnnxXrayModel(weights_name=weights)
         self.model_name = weights
         self.pathologies: list[str] = list(self._model.pathologies)
-        self._thresholds: np.ndarray = self._model.op_threshs
         self._activations: np.ndarray | None = None
 
     @property
     def model(self) -> OnnxXrayModel:
-        # The shared ONNX model, reused by GradCAM to avoid a second load.
         return self._model
 
     def predict(self, image: np.ndarray) -> ClassificationResult:
@@ -92,12 +87,10 @@ class ChestXrayClassifier(Classifier):
             Finding(
                 name=name,
                 probability=float(prob),
-                threshold=float(thr),
-                present=bool(prob > thr),
+                threshold=OPERATING_POINT,
+                present=bool(prob >= OPERATING_POINT),
             )
-            for name, prob, thr in zip(
-                self.pathologies, probs.tolist(), self._thresholds.tolist()
-            )
+            for name, prob in zip(self.pathologies, probs.tolist())
         ]
 
         return ClassificationResult(
